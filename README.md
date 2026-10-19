@@ -47,6 +47,8 @@ The ten tracked parameters are:
 
 Relevancy, faithfulness, precision, recall, correctness, and completeness are quality scores (higher is better). Hallucination, bias, and toxicity are risk scores (lower is better).
 
+The GitHub Actions evaluation check runs the evaluation unit tests on pushes and pull requests to `main`. These tests mock model and metric calls, so they do not require an API key or make paid evaluation requests.
+
 The standalone evaluator is also available. Create a UTF-8 JSON file containing a non-empty array of question/expected-answer pairs:
 
 ```json
