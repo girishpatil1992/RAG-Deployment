@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ from deepeval.metrics import (
     HallucinationMetric,
     ToxicityMetric,
 )
+from deepeval.synthesizer import Synthesizer
+from deepeval.synthesizer.config import ContextConstructionConfig
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -165,6 +168,49 @@ def generate_grounded_qa_pairs(
     return cases
 
 
+def generate_pdf_evaluation_cases(
+    pdf_path: str | Path,
+    question_count: int = 2,
+) -> list[dict[str, str]]:
+    if not 1 <= question_count <= 10:
+        raise ValueError("Question count must be between 1 and 10.")
+
+    document_path = Path(pdf_path)
+    if not document_path.is_file():
+        raise FileNotFoundError(f"Evaluation PDF does not exist: {document_path}")
+
+    goldens = Synthesizer().generate_goldens_from_docs(
+        document_paths=[str(document_path)],
+        include_expected_output=True,
+        max_goldens_per_context=question_count,
+        context_construction_config=ContextConstructionConfig(
+            max_contexts_per_document=1
+        ),
+    )
+    if len(goldens) != question_count:
+        raise ValueError(
+            f"Expected {question_count} synthesized QA pairs, received {len(goldens)}."
+        )
+
+    cases = []
+    for index, golden in enumerate(goldens, start=1):
+        context = golden.context or []
+        if not golden.input or not golden.expected_output or not context:
+            raise ValueError(
+                f"Synthesized QA pair {index} is missing its question, expected "
+                "answer, or source context."
+            )
+        cases.append(
+            {
+                "question": golden.input,
+                "expected_answer": golden.expected_output,
+                "source": document_path.name,
+                "source_context": "\n\n".join(context),
+            }
+        )
+    return cases
+
+
 def build_metrics() -> list[Any]:
     return [
         AnswerRelevancyMetric(threshold=0.7, async_mode=False),
@@ -266,12 +312,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate the document Q&A app with DeepEval."
     )
-    parser.add_argument(
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument(
         "--dataset",
-        required=True,
         help="JSON array containing question and expected_answer fields.",
     )
+    inputs.add_argument(
+        "--pdf",
+        help="PDF to synthesize evaluation questions from with DeepEval.",
+    )
+    parser.add_argument(
+        "--question-count",
+        type=int,
+        default=2,
+        help="Number of QA pairs to synthesize from --pdf (default: 2).",
+    )
     args = parser.parse_args()
+    if not 1 <= args.question_count <= 10:
+        parser.error("--question-count must be between 1 and 10.")
+    if args.dataset and args.question_count != 2:
+        parser.error("--question-count can only be used with --pdf.")
+
     load_dotenv()
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY in .env before running evaluation.")
@@ -284,10 +345,31 @@ def main() -> None:
         chunk_size=int(os.getenv("CHUNK_SIZE", "1000")),
         chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "150")),
     )
+    document_hashes: list[str] | None = None
+    collection_name = vector_store.collection_name
+    if args.pdf:
+        pdf_path = Path(args.pdf)
+        if not pdf_path.is_file():
+            raise SystemExit(f"Evaluation PDF does not exist: {pdf_path}")
+        pdf_content = pdf_path.read_bytes()
+        document_hashes = [hashlib.sha256(pdf_content).hexdigest()]
+        vector_store.ingest_document(
+            pdf_path.name,
+            pdf_content,
+            collection_name=EVALUATION_COLLECTION,
+        )
+        cases = generate_pdf_evaluation_cases(pdf_path, args.question_count)
+        collection_name = EVALUATION_COLLECTION
+    else:
+        if args.dataset is None:
+            parser.error("Either --dataset or --pdf must be provided.")
+        cases = load_cases(args.dataset)
+
     rows = evaluate_cases(
-        load_cases(args.dataset),
+        cases,
         build_rag_graph(vector_store),
-        collection_name=vector_store.collection_name,
+        document_hashes=document_hashes,
+        collection_name=collection_name,
     )
     print(json.dumps(rows, ensure_ascii=False, indent=2))
 

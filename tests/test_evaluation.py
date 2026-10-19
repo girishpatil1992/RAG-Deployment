@@ -7,6 +7,7 @@ from evaluation import (
     GroundedQABatch,
     METRIC_NAMES,
     evaluate_cases,
+    generate_pdf_evaluation_cases,
     generate_grounded_qa_pairs,
 )
 
@@ -57,6 +58,36 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(cases[0]["expected_answer"], "42")
         self.assertEqual(cases[0]["source"], "notes.txt")
         self.assertIn("The recorded value is 42.", cases[0]["source_context"])
+
+    def test_generates_requested_pdf_cases_with_deepeval_synthesizer(self):
+        goldens = [
+            SimpleNamespace(
+                input=f"Question {index}",
+                expected_output=f"Answer {index}",
+                context=[f"Source context {index}"],
+            )
+            for index in (1, 2)
+        ]
+        with (
+            patch("evaluation.Synthesizer") as synthesizer,
+            patch("evaluation.ContextConstructionConfig") as context_config,
+            patch("evaluation.Path.is_file", return_value=True),
+        ):
+            synthesizer.return_value.generate_goldens_from_docs.return_value = goldens
+            cases = generate_pdf_evaluation_cases("resume.pdf", question_count=2)
+
+        synthesizer.return_value.generate_goldens_from_docs.assert_called_once_with(
+            document_paths=["resume.pdf"],
+            include_expected_output=True,
+            max_goldens_per_context=2,
+            context_construction_config=context_config.return_value,
+        )
+        context_config.assert_called_once_with(max_contexts_per_document=1)
+        self.assertEqual(len(cases), 2)
+        self.assertEqual(cases[0]["question"], "Question 1")
+        self.assertEqual(cases[0]["expected_answer"], "Answer 1")
+        self.assertEqual(cases[0]["source"], "resume.pdf")
+        self.assertEqual(cases[0]["source_context"], "Source context 1")
 
     def test_evaluates_all_ten_metrics_and_scopes_retrieval(self):
         FakeMetric.next_score = 0.0

@@ -3,8 +3,6 @@ name: Evaluation checks
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -21,3 +19,45 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest discover -s tests -p "test_evaluation.py" -v
+      - name: Restore evaluation PDF
+        env:
+          PDF_PART_1: ${{ secrets.EVAL_PDF_BASE64_1 }}
+          PDF_PART_2: ${{ secrets.EVAL_PDF_BASE64_2 }}
+          PDF_PART_3: ${{ secrets.EVAL_PDF_BASE64_3 }}
+          PDF_PART_4: ${{ secrets.EVAL_PDF_BASE64_4 }}
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          names = ("PDF_PART_1", "PDF_PART_2", "PDF_PART_3", "PDF_PART_4")
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit(
+                  "Missing required GitHub Actions PDF secrets: "
+                  + ", ".join(missing)
+              )
+
+          encoded_pdf = "".join(os.environ[name] for name in names)
+          try:
+              pdf = base64.b64decode(encoded_pdf, validate=True)
+          except ValueError as error:
+              raise SystemExit("The evaluation PDF secrets are not valid base64.") from error
+          if not pdf.startswith(b"%PDF-"):
+              raise SystemExit("The evaluation PDF secrets do not contain a PDF file.")
+
+          path = Path("data/Girish_Patil_CV-2026.pdf")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(pdf)
+          PY
+      - name: Run PDF evaluation
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if python evaluation.py --pdf data/Girish_Patil_CV-2026.pdf --question-count 2 > "$RUNNER_TEMP/evaluation-output.log" 2>&1; then
+            echo "PDF evaluation completed successfully."
+          else
+            echo "::error::PDF evaluation failed; output was kept private on the runner."
+            exit 1
+          fi

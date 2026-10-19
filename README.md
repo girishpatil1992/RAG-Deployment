@@ -47,7 +47,9 @@ The ten tracked parameters are:
 
 Relevancy, faithfulness, precision, recall, correctness, and completeness are quality scores (higher is better). Hallucination, bias, and toxicity are risk scores (lower is better).
 
-The GitHub Actions evaluation check runs the evaluation unit tests on pushes and pull requests to `main`. These tests mock model and metric calls, so they do not require an API key or make paid evaluation requests.
+On pushes to `main`, GitHub Actions runs the evaluation unit tests and then runs `evaluation.py` against `data/Girish_Patil_CV-2026.pdf`. DeepEval's synthesizer generates two QA pairs from the PDF before the evaluator runs. This real evaluation uses OpenAI and DeepEval API calls and may incur costs.
+
+The PDF is not committed to Git, and evaluation output is kept out of workflow logs. Configure the repository's Actions secrets with `OPENAI_API_KEY` and `EVAL_PDF_BASE64_1` through `EVAL_PDF_BASE64_4`. The four PDF secrets are consecutive base64 chunks with no line breaks, each no longer than 40,000 characters.
 
 The standalone evaluator is also available. Create a UTF-8 JSON file containing a non-empty array of question/expected-answer pairs:
 
