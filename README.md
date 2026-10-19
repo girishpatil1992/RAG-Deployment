@@ -1,4 +1,4 @@
-# Document Q&A with RAG
+# Document Q&A with RAG #
 
 A small Streamlit document Q&A app using LangGraph for retrieval and answer generation, Qdrant for vector search, and SQLite for conversation history and a persistent chunk/embedding cache.
 
